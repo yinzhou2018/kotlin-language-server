@@ -11,8 +11,13 @@ import org.javacs.kt.util.toPath
 import org.jetbrains.kotlin.descriptors.SourceFile
 import org.jetbrains.kotlin.descriptors.DeclarationDescriptor
 import org.jetbrains.kotlin.descriptors.DeclarationDescriptorWithSource
+import org.jetbrains.kotlin.incremental.storage.BasicFileToPathConverter.toPath
+import org.jetbrains.kotlin.js.dce.InputResource.Companion.file
 import org.jetbrains.kotlin.js.resolve.diagnostics.findPsi
+import org.jetbrains.kotlin.load.kotlin.JvmPackagePartSource
 import org.jetbrains.kotlin.resolve.source.PsiSourceFile
+import org.jetbrains.kotlin.serialization.deserialization.descriptors.DescriptorWithContainerSource
+import kotlin.io.path.Path
 import kotlin.math.max
 
 fun extractRange(content: String, range: Range) =
@@ -98,7 +103,15 @@ fun location(declaration: DeclarationDescriptor): Location? {
                 val file = sourceFile.psiFile.toURIString()
                 return Location(file, Range(Position(0, 0), Position(0, 0)))
             }
-            SourceFile.NO_SOURCE_FILE -> Unit // If no source file is present, do nothing
+            SourceFile.NO_SOURCE_FILE -> {
+                if (declaration is DescriptorWithContainerSource) {
+                    val sourceFile = declaration.containerSource
+                    if (sourceFile is JvmPackagePartSource) {
+                        val file = sourceFile.knownJvmBinaryClass!!.location.toURIString()
+                        return Location(file, Range(Position(0, 0), Position(0, 0)))
+                    }
+                }
+            }
             else -> LOG.info("Source type of {} not recognized", sourceFile)
         }
     } else {
@@ -121,6 +134,7 @@ fun location(expr: PsiElement): Location? {
 }
 
 fun PsiFile.toURIString() = toPath().toUri().toString()
+fun String.toURIString() = Path(this).toUri().toString()
 
 /**
  * Region that has been changed
