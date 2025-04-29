@@ -8,15 +8,15 @@ import org.eclipse.lsp4j.Position
 import org.eclipse.lsp4j.Range
 import org.javacs.kt.LOG
 import org.javacs.kt.util.toPath
-import org.jetbrains.kotlin.descriptors.SourceFile
 import org.jetbrains.kotlin.descriptors.DeclarationDescriptor
 import org.jetbrains.kotlin.descriptors.DeclarationDescriptorWithSource
-import org.jetbrains.kotlin.incremental.storage.BasicFileToPathConverter.toPath
-import org.jetbrains.kotlin.js.dce.InputResource.Companion.file
+import org.jetbrains.kotlin.descriptors.impl.DeclarationDescriptorNonRootImpl
 import org.jetbrains.kotlin.js.resolve.diagnostics.findPsi
 import org.jetbrains.kotlin.load.kotlin.JvmPackagePartSource
+import org.jetbrains.kotlin.load.kotlin.KotlinJvmBinarySourceElement
 import org.jetbrains.kotlin.resolve.source.PsiSourceFile
 import org.jetbrains.kotlin.serialization.deserialization.descriptors.DescriptorWithContainerSource
+import org.jetbrains.kotlin.serialization.deserialization.descriptors.DeserializedClassDescriptor
 import kotlin.io.path.Path
 import kotlin.math.max
 
@@ -90,7 +90,7 @@ fun position(content: String, offset: Int): Position {
 }
 
 fun range(content: String, range: TextRange) =
-        Range(position(content, range.startOffset), position(content, range.endOffset))
+    Range(position(content, range.startOffset), position(content, range.endOffset))
 
 fun location(declaration: DeclarationDescriptor): Location? {
     val psiLocation = declaration.findPsi()?.let(::location)
@@ -98,26 +98,32 @@ fun location(declaration: DeclarationDescriptor): Location? {
 
     if (declaration is DeclarationDescriptorWithSource) {
         val sourceFile = declaration.source.containingFile
-        when (sourceFile) {
-            is PsiSourceFile -> {
-                val file = sourceFile.psiFile.toURIString()
-                return Location(file, Range(Position(0, 0), Position(0, 0)))
-            }
-            SourceFile.NO_SOURCE_FILE -> {
-                if (declaration is DescriptorWithContainerSource) {
-                    val sourceFile = declaration.containerSource
-                    if (sourceFile is JvmPackagePartSource) {
-                        val file = sourceFile.knownJvmBinaryClass!!.location.toURIString()
-                        return Location(file, Range(Position(0, 0), Position(0, 0)))
-                    }
-                }
-            }
-            else -> LOG.info("Source type of {} not recognized", sourceFile)
+        if (sourceFile is PsiSourceFile) {
+            val file = sourceFile.psiFile.toURIString()
+            return Location(file, Range(Position(0, 0), Position(0, 0)))
         }
-    } else {
-        LOG.info("{} does not have a source", declaration)
     }
 
+    if (declaration is DescriptorWithContainerSource) {
+        val sourceFile = declaration.containerSource
+        if (sourceFile is JvmPackagePartSource) {
+            val file = sourceFile.knownJvmBinaryClass!!.location.toURIString()
+            return Location(file, Range(Position(0, 0), Position(0, 0)))
+        }
+    }
+
+    if (declaration is DeclarationDescriptorNonRootImpl) {
+        val containingDeclaration = declaration.containingDeclaration
+        if (containingDeclaration is DeserializedClassDescriptor) {
+            val sourceElement = containingDeclaration.source
+            if (sourceElement is KotlinJvmBinarySourceElement) {
+                val file = sourceElement.binaryClass.location.toURIString()
+                return Location(file, Range(Position(0, 0), Position(0, 0)))
+            }
+        }
+    }
+
+    LOG.info("{} does not have a source", declaration)
     return null
 }
 
@@ -128,7 +134,11 @@ val Range.isZero: Boolean
     get() = start.isZero && end.isZero
 
 fun location(expr: PsiElement): Location? {
-    val content = try { expr.containingFile?.text } catch (e: NullPointerException) { null }
+    val content = try {
+        expr.containingFile?.text
+    } catch (e: NullPointerException) {
+        null
+    }
     val file = expr.containingFile.toURIString()
     return content?.let { Location(file, range(it, expr.textRange)) }
 }
